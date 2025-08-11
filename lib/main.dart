@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:yandex_mobileads/mobile_ads.dart'; // Yandex Ads
+import 'package:yandex_mobileads/mobile_ads.dart';
 
 void main() {
   runApp(const MyApp());
@@ -11,9 +11,12 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter + Yandex Ads',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple)),
-      home: const MyHomePage(title: 'Show Yandex Interstitial'),
+      title: 'YandexRewardApp', // app name
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      home: const MyHomePage(title: 'Rewarded Ad Demo'),
     );
   }
 }
@@ -27,66 +30,103 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  // Yandex interstitial pieces
-  late final Future<InterstitialAdLoader> _adLoader;
-  InterstitialAd? _interstitial;
+  // Loader + current rewarded ad
+  late final Future<RewardedAdLoader> _adLoader;
+  RewardedAd? _rewarded;
+  bool _isLoading = false; // UX: show feedback when fetching
+
+  // Your real rewarded ad unit
+  static const String _rewardedUnitId = 'R-M-16666594-1';
 
   @override
   void initState() {
     super.initState();
-    MobileAds.initialize(); // Initialize SDK
-    _adLoader = _createInterstitialAdLoader();
-    _loadInterstitial();
+    // Initialize SDK early
+    MobileAds.initialize();
+    _adLoader = _createRewardedLoader();
+    _loadRewarded();
   }
 
-  Future<InterstitialAdLoader> _createInterstitialAdLoader() {
-    return InterstitialAdLoader.create(
-      onAdLoaded: (InterstitialAd ad) {
-        _interstitial = ad;
+  Future<RewardedAdLoader> _createRewardedLoader() {
+    return RewardedAdLoader.create(
+      onAdLoaded: (RewardedAd ad) {
+        _rewarded = ad;
       },
       onAdFailedToLoad: (AdRequestError error) {
-        debugPrint('Yandex interstitial failed to load: $error');
+        debugPrint('Rewarded failed to load: $error');
       },
     );
   }
 
-  Future<void> _loadInterstitial() async {
+  Future<void> _loadRewarded() async {
     final loader = await _adLoader;
     await loader.loadAd(
-      adRequestConfiguration: const AdRequestConfiguration(adUnitId: 'demo-interstitial-yandex'),
+      adRequestConfiguration: const AdRequestConfiguration(
+        adUnitId: _rewardedUnitId, // ✅ real unit
+      ),
     );
   }
 
-  Future<void> _showInterstitial() async {
-    if (_interstitial == null) {
-      await _loadInterstitial();
-      return;
+  Future<void> _showRewarded() async {
+    // If not ready, try loading once and inform the user
+    if (_rewarded == null) {
+      setState(() => _isLoading = true);
+      await _loadRewarded();
+      setState(() => _isLoading = false);
+
+      if (_rewarded == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Ad not ready yet. Please try again.')),
+          );
+        }
+        return;
+      }
     }
 
-    _interstitial!.setAdEventListener(
-      eventListener: InterstitialAdEventListener(
-        onAdShown: () => debugPrint('Yandex interstitial shown'),
+    // Handle lifecycle + reward
+    _rewarded!.setAdEventListener(
+      eventListener: RewardedAdEventListener(
+        onAdShown: () => debugPrint('Rewarded shown'),
         onAdFailedToShow: (error) {
-          debugPrint('Failed to show: $error');
-          _interstitial?.destroy();
-          _interstitial = null;
-          _loadInterstitial();
+          debugPrint('Rewarded failed to show: $error');
+          _rewarded?.destroy();
+          _rewarded = null;
+          _loadRewarded(); // prepare next
         },
         onAdDismissed: () {
-          _interstitial?.destroy();
-          _interstitial = null;
-          _loadInterstitial();
+          _rewarded?.destroy();
+          _rewarded = null;
+          _loadRewarded(); // preload next after closing
+        },
+        onAdImpression: (impressionData) {
+          // Some versions don’t expose .rawData; toString() is safe
+          debugPrint('Impression: $impressionData');
+        },
+        onAdClicked: () => debugPrint('Rewarded clicked'),
+        onRewarded: (Reward reward) {
+          // ✅ Grant your in-app reward here
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Reward: ${reward.amount} ${reward.type}')),
+            );
+          }
         },
       ),
     );
 
-    await _interstitial!.show();
-    await _interstitial!.waitForDismiss();
+    await _rewarded!.show();
+
+    // Optional: wait for dismissal and read the returned Reward as well
+    final reward = await _rewarded!.waitForDismiss();
+    if (reward != null && mounted) {
+      debugPrint('waitForDismiss -> got ${reward.amount} ${reward.type}');
+    }
   }
 
   @override
   void dispose() {
-    _interstitial?.destroy();
+    _rewarded?.destroy();
     super.dispose();
   }
 
@@ -99,10 +139,10 @@ class _MyHomePageState extends State<MyHomePage> {
       ),
       body: Center(
         child: ElevatedButton(
-          onPressed: _showInterstitial,
-          child: const Text(
-            'Show Ad',
-            style: TextStyle(fontSize: 18),
+          onPressed: _isLoading ? null : _showRewarded,
+          child: Text(
+            _isLoading ? 'Loading…' : 'Show Ad',
+            style: const TextStyle(fontSize: 18),
           ),
         ),
       ),
